@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Load necessary libraries
+library(readxl)
+library(cluster)  # For k-means clustering
+
+# Load data (Update the file path if needed)
+data <- read_excel("F:/RNAseq/Term/DEG/All DEG excel/K means clustering prep/1% O2 vs FT TSCM/1%_O2_vs_FT_TSCM.xlsx")
+
+# Ensure gene names are preserved
+rownames(data) <- data$Name  # Assign gene names as row names
+df <- data[, -1]  # Remove the column with gene names (they are now row names)
+
+# Convert to matrix
+tpm_matrix <- as.matrix(df)
+
+# Log transform the TPM values (for better visualization)
+log_tpm_matrix <- log2(tpm_matrix + 1)
+
+# Ensure row names (gene names) remain
+rownames(log_tpm_matrix) <- rownames(data)
+
+# Elbow Method to determine optimal k
+wss <- function(k) {
+  kmeans(log_tpm_matrix, centers = k, nstart = 10)$tot.withinss
+}
+
+k.values <- 2:10  # Range of k values to test
+wss_values <- sapply(k.values, wss)
+
+# Plot the Elbow method
+plot(k.values, wss_values, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters (k)", ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for Optimal k")
+
+# Perform K-means clustering
+set.seed(123)  # For reproducibility
+optimal_k <- 4  # Adjust based on Elbow method result
+kmeans_result <- kmeans(log_tpm_matrix, centers = optimal_k, nstart = 10)
+
+# Base R Heatmap (Alternative to pheatmap)
+heatmap(log_tpm_matrix, Rowv = NA, Colv = NA, scale = "row", 
+        col = colorRampPalette(c("blue", "white", "red"))(256),
+        main = "Heatmap of Log TPM Values")
+
+# PCA Visualization of Clusters
+pca_result <- prcomp(log_tpm_matrix)
+
+# Plot PCA with clusters
+plot(pca_result$x[, 1:2], col = kmeans_result$cluster, pch = 19, 
+     xlab = "PC1", ylab = "PC2", main = "K-means Clustering of Genes")
+
+legend("topright", legend = unique(kmeans_result$cluster), 
+       col = unique(kmeans_result$cluster), pch = 19, title = "Clusters")
+
+# Save Gene Lists for Each Cluster
+clustered_genes <- data.frame(Gene = rownames(log_tpm_matrix), Cluster = kmeans_result$cluster)
+gene_clusters <- split(clustered_genes$Gene, clustered_genes$Cluster)
+
+for (i in names(gene_clusters)) {
+  write.table(gene_clusters[[i]], paste0("Cluster_", i, "_genes.txt"), 
+              row.names = FALSE, col.names = FALSE, quote = FALSE)
+}
+
+# Print cluster sizes
+table(clustered_genes$Cluster)
+# Save all clusters in a single CSV file
+write.csv(clustered_genes, "Clustered_Genes.csv", row.names = FALSE)
+
+
+```
+
+```{r}
+# Load libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)  # Replace with your organism's package
+
+# Example: gene_clusters is a list of gene vectors for each cluster
+gene_clusters <- split(clustered_genes$Gene, clustered_genes$Cluster)
+
+# Convert gene symbols to Entrez IDs
+gene_clusters_entrez <- lapply(gene_clusters, function(genes) {
+  mapIds(org.Hs.eg.db, keys = genes, column = "ENTREZID", keytype = "SYMBOL")
+})
+
+# Perform GO analysis for each cluster
+go_results <- lapply(gene_clusters_entrez, function(genes) {
+  enrichGO(gene          = genes,
+           OrgDb         = org.Hs.eg.db,  # Replace with your organism's package
+           keyType       = "ENTREZID",
+           ont           = "BP",         # Biological Process (BP), Molecular Function (MF), or Cellular Component (CC)
+           pAdjustMethod = "BH",         # Benjamini-Hochberg correction
+           pvalueCutoff  = 0.05,         # Significance threshold
+           qvalueCutoff  = 0.05,         # Adjusted p-value threshold
+           readable      = TRUE)         # Convert Entrez IDs to gene symbols in results
+})
+
+# Save GO results to files
+for (i in names(go_results)) {
+  write.csv(go_results[[i]], file = paste0("Cluster_", i, "_GO_results.csv"), row.names = FALSE)
+}
+
+# Visualize and save GO results for each cluster as PNG
+for (i in names(go_results)) {
+  # Open a PNG graphics device with larger dimensions
+  png(filename = paste0("Cluster_", i, "_GO_plot.png"), width = 1800, height = 1200, res = 150)
+  
+  # Generate the dot plot with smaller font size
+  print(dotplot(go_results[[i]], 
+                showCategory = 15,        # Show top 15 GO terms
+                title = paste("GO Analysis for Cluster", i),
+                font.size = 10)            # Reduce font size for better spacing
+  
+  )
+  
+  # Close the PNG device
+  dev.off()
+}
+
+
+
+
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
